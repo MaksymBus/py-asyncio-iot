@@ -1,7 +1,13 @@
 import time
 import asyncio
 
-from iot.devices import HueLightDevice, SmartSpeakerDevice, SmartToiletDevice
+from iot.devices import (
+    HueLightDevice,
+    SmartSpeakerDevice,
+    SmartToiletDevice,
+    run_parallel,
+    run_sequence
+)
 from iot.message import Message, MessageType
 from iot.service import IOTService
 
@@ -15,31 +21,38 @@ async def main() -> None:
     speaker = SmartSpeakerDevice()
     toilet = SmartToiletDevice()
 
-    task_1 = asyncio.create_task(service.register_device(hue_light))
-    task_2 = asyncio.create_task(service.register_device(speaker))
-    task_3 = asyncio.create_task(service.register_device(toilet))
-    hue_light_id = await task_1
-    speaker_id = await task_2
-    toilet_id = await task_3
-
-    # create a few programs
-    wake_up_program = [
-        Message(hue_light_id, MessageType.SWITCH_ON),
-        Message(speaker_id, MessageType.SWITCH_ON),
-        Message(speaker_id, MessageType.PLAY_SONG, "Rick Astley - Never Gonna Give You Up"),
+    registration_tasks = [
+        service.register_device(hue_light),
+        service.register_device(speaker),
+        service.register_device(toilet),
     ]
 
-    sleep_program = [
-        Message(hue_light_id, MessageType.SWITCH_OFF),
-        Message(speaker_id, MessageType.SWITCH_OFF),
-        Message(toilet_id, MessageType.FLUSH),
-        Message(toilet_id, MessageType.CLEAN),
+    hue_light_id, speaker_id, toilet_id = await asyncio.gather(*registration_tasks)
+
+    await run_parallel(
+        run_sequence(
+            service.send_msg(Message(hue_light_id, MessageType.SWITCH_ON)),
+            service.send_msg(Message(speaker_id, MessageType.SWITCH_ON)),
+            service.send_msg(Message(speaker_id, MessageType.PLAY_SONG, "Rick Astley - Never Gonna Give You Up"))
+        ),
+        service.send_msg(Message(toilet_id, MessageType.PREHEAT))
+    )
+
+    await run_parallel(
+        run_sequence(
+            service.send_msg(Message(toilet_id, MessageType.FLUSH)),
+            service.send_msg(Message(toilet_id, MessageType.CLEAN))
+        ),
+        service.send_msg(Message(speaker_id, MessageType.SWITCH_OFF)),
+        service.send_msg(Message(hue_light_id, MessageType.SWITCH_OFF)),
+    )
+
+    unregistration_tasks = [
+        service.unregister_device(hue_light_id),
+        service.unregister_device(speaker_id),
+        service.unregister_device(toilet_id),
     ]
-
-    # run the programs
-    await service.run_program(wake_up_program)
-    await service.run_program(sleep_program)
-
+    await asyncio.gather(*unregistration_tasks)
 
 if __name__ == "__main__":
     start = time.perf_counter()

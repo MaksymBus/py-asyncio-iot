@@ -1,7 +1,7 @@
 import asyncio
 import random
 import string
-from typing import Protocol
+from typing import Protocol, Awaitable
 
 from .message import Message, MessageType
 
@@ -27,6 +27,9 @@ class IOTService:
     def __init__(self) -> None:
         self.devices: dict[str, Device] = {}
 
+    async def register_devices(self, devices: list[Device]) -> list[str]:
+        return await asyncio.gather(*(self.register_device(d) for d in devices))
+
     async def register_device(self, device: Device) -> str:
         await device.connect()
         device_id = generate_id()
@@ -34,22 +37,19 @@ class IOTService:
         return device_id
 
     async def unregister_device(self, device_id: str) -> None:
-        await self.devices[device_id].disconnect()
-        del self.devices[device_id]
+        if device_id in self.devices:
+            await self.devices[device_id].disconnect()
+            del self.devices[device_id]
+        else:
+            print(f"Warning: Device ID {device_id} not found for unregistration.")
 
-    def get_device(self, device_id: str) -> Device:
-        return self.devices[device_id]
-
-    async def run_program(self, program: list[Message]) -> None:
-        print("=====RUNNING PROGRAM======")
-        async with asyncio.TaskGroup() as tg:
-            tasks = [
-                tg.create_task(self.send_msg(msg=msg)) for msg in program
-            ]
-
-        for task in tasks:
-            task.result()
-        print("=====END OF PROGRAM======")
-
-    async def send_msg(self, msg: Message) -> None:
-        await self.devices[msg.device_id].send_message(msg.msg_type, msg.data)
+    def send_msg(self, msg: Message) -> Awaitable[None]:
+        if msg.device_id in self.devices:
+            device = self.devices[msg.device_id]
+            return device.send_message(msg.msg_type, msg.data)
+        else:
+            async def no_op():
+                print(
+                    f"KeyError: Device not found, missing device_id"
+                )
+            return no_op()
